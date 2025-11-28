@@ -5,8 +5,29 @@ from PyQt5.QtWidgets import QFileDialog, QSystemTrayIcon, QMenu, QAction
 import os
 import shutil
 
-LAST_GIF_FILE = "config/last_gif.txt"
-CONFIG_FILE = "config/last_gif_config.txt"
+
+# -----------------------------------------------------------------------------------
+#                    FONCTION COMPATIBLE PYINSTALLER
+# -----------------------------------------------------------------------------------
+def resource_path(relative_path):
+    """
+    Trouve le chemin absolu d’un fichier, compatible PyInstaller.
+    """
+    try:
+        base_path = sys._MEIPASS  # PyInstaller
+    except Exception:
+        base_path = os.path.abspath(".")  # Exécution normale
+
+    return os.path.join(base_path, relative_path)
+
+
+# Fichiers de configuration
+LAST_GIF_FILE = resource_path("config/last_gif.txt")
+CONFIG_FILE = resource_path("config/last_gif_config.txt")
+
+# Dossier GIF
+GIF_FOLDER = resource_path("gif")
+
 
 class GifWindow(QtWidgets.QLabel):
     def __init__(self):
@@ -34,23 +55,24 @@ class GifWindow(QtWidgets.QLabel):
         self.build_tray_menu()
         self.start_pos = None
 
-        os.makedirs("gif", exist_ok=True)
-        pos_loaded = None
+        os.makedirs(GIF_FOLDER, exist_ok=True)
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+
+        # Chargement dernier GIF
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, "r") as f:
                 lines = f.read().splitlines()
-                last_gif_path = lines[0] if lines else None
-                if last_gif_path and os.path.exists(last_gif_path):
-                    if len(lines) > 3:
-                        x, y = map(int, lines[3].split(","))
+                if lines:
+                    last_gif_path = lines[0]
+                    if os.path.exists(last_gif_path):
                         self.load_gif(last_gif_path)
-                        QtCore.QTimer.singleShot(100, lambda: self.move(x, y))
-                    else:
-                        self.load_gif(last_gif_path)
+                        if len(lines) > 3:
+                            x, y = map(int, lines[3].split(","))
+                            QtCore.QTimer.singleShot(100, lambda: self.move(x, y))
         else:
-            gif_files = [f for f in sorted(os.listdir("gif")) if f.endswith(".gif")]
+            gif_files = [f for f in sorted(os.listdir(GIF_FOLDER)) if f.endswith(".gif")]
             if gif_files:
-                self.load_gif(os.path.join("gif", gif_files[0]))
+                self.load_gif(os.path.join(GIF_FOLDER, gif_files[0]))
 
     def closeEvent(self, event):
         if self.gif:
@@ -58,7 +80,9 @@ class GifWindow(QtWidgets.QLabel):
             self.save_config(path)
         event.accept()
 
-    # --- Menu Tray ---
+    # -----------------------------------------------------------------------------------
+    #                                  MENU TRAY
+    # -----------------------------------------------------------------------------------
     def build_tray_menu(self):
         self.tray_icon = QSystemTrayIcon(QtGui.QIcon())
         self.tray_icon.setToolTip("GIF en Avant-Plan")
@@ -87,7 +111,9 @@ class GifWindow(QtWidgets.QLabel):
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.show()
 
-    # --- Sauvegarder configuration ---
+    # -----------------------------------------------------------------------------------
+    #                                SAUVEGARDE CONFIG
+    # -----------------------------------------------------------------------------------
     def save_config(self, path):
         pos = self.pos()
         with open(CONFIG_FILE, "w") as f:
@@ -96,7 +122,9 @@ class GifWindow(QtWidgets.QLabel):
             f.write(f"{self.zoom_percent}\n")
             f.write(f"{pos.x()},{pos.y()}\n")
 
-    # --- Charger un GIF ---
+    # -----------------------------------------------------------------------------------
+    #                                CHARGEMENT GIF
+    # -----------------------------------------------------------------------------------
     def select_gif(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choisir un GIF", "", "GIF Files (*.gif)")
         if path:
@@ -108,13 +136,12 @@ class GifWindow(QtWidgets.QLabel):
         self.gif.setSpeed(self.fps * 10)
         self.setMovie(self.gif)
         self.gif.start()
-        self.has_gif = True
 
         def adjust_size_on_first_frame(frame_number):
             if frame_number == 0:
                 self.base_size = self.gif.currentImage().size()
 
-                # Charger config si disponible et correspond au gif chargé
+                # Charger paramètres du même gif
                 if os.path.exists(CONFIG_FILE):
                     with open(CONFIG_FILE, "r") as f:
                         lines = f.read().splitlines()
@@ -133,23 +160,19 @@ class GifWindow(QtWidgets.QLabel):
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setStyleSheet("background: rgba(0,0,0,0);")
 
-        # Sauvegarde du dernier GIF
-        os.makedirs("gif", exist_ok=True)
+        # Mise à jour du fichier last_gif.txt
         with open(LAST_GIF_FILE, "w") as f:
             f.write(path)
 
-        # Ne pas sauvegarder immédiatement ici pour éviter écraser la position restaurée
-        # self.save_config(path)
-
-    # --- Zoom ---
+    # -----------------------------------------------------------------------------------
+    #                                      ZOOM
+    # -----------------------------------------------------------------------------------
     def apply_zoom(self):
         if self.gif and self.base_size:
             new_size = self.base_size * (self.zoom_percent / 100)
             self.gif.setScaledSize(new_size)
             self.resize(new_size)
-            if self.gif:
-                path = self.gif.fileName()
-                self.save_config(path)
+            self.save_config(self.gif.fileName())
 
     def set_zoom(self):
         dialog = QtWidgets.QDialog(self)
@@ -161,30 +184,29 @@ class GifWindow(QtWidgets.QLabel):
         font = QtGui.QFont()
         font.setPointSize(20)
         label.setFont(font)
-        label.setStyleSheet("color: white;")
         layout.addWidget(label)
 
-        button_layout = QtWidgets.QHBoxLayout()
-        minus_btn = QtWidgets.QPushButton("x0.8")
-        plus_btn = QtWidgets.QPushButton("x1.2")
-        for btn in [minus_btn, plus_btn]:
-            btn.setFont(font)
-            btn.setStyleSheet("color: white; background-color: black;")
-        button_layout.addWidget(minus_btn)
-        button_layout.addWidget(plus_btn)
-        layout.addLayout(button_layout)
+        btn_minus = QtWidgets.QPushButton("x0.8")
+        btn_plus = QtWidgets.QPushButton("x1.2")
 
-        def update_zoom(multiplier):
-            self.zoom_percent = max(10, min(300, int(self.zoom_percent * multiplier)))
-            label.setText(f"Zoom : {self.zoom_percent}%")
-            self.apply_zoom()
+        btn_minus.clicked.connect(lambda: self.update_zoom(label, 0.8))
+        btn_plus.clicked.connect(lambda: self.update_zoom(label, 1.2))
 
-        plus_btn.clicked.connect(lambda: update_zoom(1.2))
-        minus_btn.clicked.connect(lambda: update_zoom(0.8))
+        h = QtWidgets.QHBoxLayout()
+        h.addWidget(btn_minus)
+        h.addWidget(btn_plus)
+        layout.addLayout(h)
 
         dialog.exec_()
 
-    # --- FPS ---
+    def update_zoom(self, label, mult):
+        self.zoom_percent = max(10, min(300, int(self.zoom_percent * mult)))
+        label.setText(f"Zoom : {self.zoom_percent}%")
+        self.apply_zoom()
+
+    # -----------------------------------------------------------------------------------
+    #                                      FPS
+    # -----------------------------------------------------------------------------------
     def set_fps(self):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Régler FPS")
@@ -194,48 +216,46 @@ class GifWindow(QtWidgets.QLabel):
         slider.setMinimum(1)
         slider.setMaximum(60)
         slider.setValue(self.fps)
-        slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
-        slider.setTickInterval(5)
+        layout.addWidget(slider)
 
         label = QtWidgets.QLabel(f"FPS : {self.fps}")
         layout.addWidget(label)
-        layout.addWidget(slider)
 
-        def on_slider_change(value):
-            self.fps = value
-            label.setText(f"FPS : {value}")
-            if self.gif:
-                self.gif.setSpeed(self.fps * 10)
-            if self.gif:
-                path = self.gif.fileName()
-                self.save_config(path)
+        def change(v):
+            self.fps = v
+            label.setText(f"FPS : {v}")
+            self.gif.setSpeed(self.fps * 10)
+            self.save_config(self.gif.fileName())
 
-        slider.valueChanged.connect(on_slider_change)
+        slider.valueChanged.connect(change)
         dialog.exec_()
 
-    # --- Drag & Drop ---
+    # -----------------------------------------------------------------------------------
+    #                                  DRAG & DROP
+    # -----------------------------------------------------------------------------------
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
-                if url.toLocalFile().endswith('.gif'):
+                if url.toLocalFile().lower().endswith('.gif'):
                     event.accept()
                     return
         event.ignore()
 
     def dropEvent(self, event):
         for url in event.mimeData().urls():
-            if url.toLocalFile().endswith('.gif'):
+            if url.toLocalFile().lower().endswith('.gif'):
                 src = url.toLocalFile()
-                os.makedirs("gif", exist_ok=True)
+                os.makedirs(GIF_FOLDER, exist_ok=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                dst = os.path.join("gif", f"gif_{timestamp}.gif")
+                dst = os.path.join(GIF_FOLDER, f"gif_{timestamp}.gif")
                 shutil.copy2(src, dst)
                 self.load_gif(dst)
                 return
 
-    # --- Bibliothèque GIFs ---
+    # -----------------------------------------------------------------------------------
+    #                               BIBLIOTHÈQUE GIF
+    # -----------------------------------------------------------------------------------
     def open_gif_library(self):
-        os.makedirs("gif", exist_ok=True)
         self.library_dialog = QtWidgets.QDialog(self)
         self.library_dialog.setWindowTitle("Bibliothèque GIFs")
         self.library_dialog.resize(400, 300)
@@ -244,13 +264,9 @@ class GifWindow(QtWidgets.QLabel):
         self.gif_list_widget = QtWidgets.QListWidget()
         self.gif_list_widget.setViewMode(QtWidgets.QListView.IconMode)
         self.gif_list_widget.setIconSize(QtCore.QSize(100, 100))
-        self.gif_list_widget.setResizeMode(QtWidgets.QListWidget.Adjust)
-        self.gif_list_widget.setSpacing(10)
-        self.gif_list_widget.setStyleSheet("background-color: white;")
         layout.addWidget(self.gif_list_widget)
 
-        self.delete_btn = QtWidgets.QPushButton("Supprimer le GIF sélectionné")
-        self.delete_btn.setStyleSheet("background-color: red; color: white; font-weight: bold;")
+        self.delete_btn = QtWidgets.QPushButton("Supprimer GIF")
         layout.addWidget(self.delete_btn)
 
         self.refresh_gif_list()
@@ -261,47 +277,37 @@ class GifWindow(QtWidgets.QLabel):
 
     def refresh_gif_list(self):
         self.gif_list_widget.clear()
-        gif_folder = "gif"
-        os.makedirs(gif_folder, exist_ok=True)
-        files = [f for f in sorted(os.listdir(gif_folder)) if f.endswith(".gif")]
-
-        self.delete_btn.setEnabled(len(files) > 1)
+        files = [f for f in sorted(os.listdir(GIF_FOLDER)) if f.endswith(".gif")]
 
         for filename in files:
-            file_path = os.path.join(gif_folder, filename)
+            file_path = os.path.join(GIF_FOLDER, filename)
             movie = QtGui.QMovie(file_path)
             movie.jumpToFrame(0)
             pixmap = movie.currentPixmap()
-            item = QtWidgets.QListWidgetItem()
-            item.setIcon(QtGui.QIcon(pixmap))
-            item.setText(filename)
+            item = QtWidgets.QListWidgetItem(QtGui.QIcon(pixmap), filename)
             self.gif_list_widget.addItem(item)
 
     def load_selected_gif(self, item):
-        file_path = os.path.join("gif", item.text())
+        file_path = os.path.join(GIF_FOLDER, item.text())
         if os.path.exists(file_path):
             self.load_gif(file_path)
-            if hasattr(self, "library_dialog") and self.library_dialog:
-                self.library_dialog.accept()
-                self.library_dialog = None
+            self.library_dialog.accept()
 
     def delete_selected_gif(self):
         selected_items = self.gif_list_widget.selectedItems()
         if not selected_items:
             return
 
-        gif_folder = "gif"
-        if len([f for f in os.listdir(gif_folder) if f.endswith(".gif")]) <= 1:
-            return
-
         for item in selected_items:
-            file_path = os.path.join(gif_folder, item.text())
+            file_path = os.path.join(GIF_FOLDER, item.text())
             if os.path.exists(file_path):
                 os.remove(file_path)
 
         self.refresh_gif_list()
 
-    # --- Déplacement de la fenêtre ---
+    # -----------------------------------------------------------------------------------
+    #                                DÉPLACEMENT FENÊTRE
+    # -----------------------------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             self.start_pos = event.globalPos()
@@ -311,20 +317,21 @@ class GifWindow(QtWidgets.QLabel):
         if event.buttons() == QtCore.Qt.LeftButton and self.start_pos:
             diff = event.globalPos() - self.start_pos
             self.move(self.init_pos + diff)
-            if self.gif:
-                path = self.gif.fileName()
-                self.save_config(path)
+            self.save_config(self.gif.fileName())
 
-    # --- Zoom molette ---
+    # -----------------------------------------------------------------------------------
+    #                                  ZOOM MOLETTE
+    # -----------------------------------------------------------------------------------
     def wheelEvent(self, event):
-        if self.gif:
-            if event.angleDelta().y() > 0:
-                self.zoom_percent = min(300, int(self.zoom_percent * 1.2))
-            else:
-                self.zoom_percent = max(10, int(self.zoom_percent * 0.8))
-            self.apply_zoom()
+        if event.angleDelta().y() > 0:
+            self.zoom_percent = min(300, int(self.zoom_percent * 1.2))
+        else:
+            self.zoom_percent = max(10, int(self.zoom_percent * 0.8))
+        self.apply_zoom()
 
-    # --- Menu contextuel ---
+    # -----------------------------------------------------------------------------------
+    #                                MENU CONTEXTUEL
+    # -----------------------------------------------------------------------------------
     def showMenu(self, pos):
         menu = QMenu()
         menu.addAction(QAction("Ouvrir un GIF", self, triggered=self.select_gif))
@@ -336,7 +343,9 @@ class GifWindow(QtWidgets.QLabel):
         menu.exec_(self.mapToGlobal(pos))
 
 
-# --- Exécution ---
+# -----------------------------------------------------------------------------------
+#                                   LANCEMENT APP
+# -----------------------------------------------------------------------------------
 app = QtWidgets.QApplication(sys.argv)
 app.setQuitOnLastWindowClosed(False)
 window = GifWindow()
